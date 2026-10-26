@@ -1,0 +1,78 @@
+# CoT Rewrite Inference Pipeline - Full Configuration Example
+# Copy this file and edit the paths/parameters for your experiment.
+
+# Basic configuration
+experiment_name: "llama3_8b_3b_grpo_8x40g"
+output_root: "${OUTPUT_ROOT:-./outputs/cot_rewrite}"
+resume: true   # Auto-resume from last checkpoint on restart
+seed: 42
+
+# Model configuration
+model:
+  checkpoint_path: "${MODEL_CHECKPOINT_PATH:-./checkpoints/example_model}"
+  # Format detection: auto / hf / lora / fsdp / megatron
+  # auto: detects based on directory structure
+  format: "auto"
+  merge_lora: true       # Merge LoRA weights if format=lora
+  dtype: "bfloat16"
+  max_model_len: 8192
+
+# Rollout configuration (Step 2)
+rollout:
+  input_data: "${INPUT_DATA:-./data/train.jsonl}"  # ShareGPT format JSONL
+  num_rollouts: 3          # Number of rewrites per sample
+  batch_size: 96           # Rollouts per mini-batch (= samples x num_rollouts); controls GPU concurrency and tqdm granularity
+
+  generation:
+    temperature: 0.7
+    top_p: 0.9
+    max_new_tokens: 8192
+
+  parallel:
+    # gpu_ids: auto-detected if not specified
+    # gpu_ids: [0, 1, 2, 3, 4, 5, 6, 7]
+    tensor_parallel_size: 1   # GPUs per vLLM instance (DP = total_gpus / tp_size)
+
+# Correct Judge configuration (Step 3)
+correct_judge:
+  model_path: "${CORRECT_JUDGE_MODEL_PATH:-./models/Qwen3-8B}"
+  enabled: true
+  batch_size: 96           # Total items per step (same semantics as rollout; per-worker = batch_size / num_gpus)
+  tensor_parallel_size: 1
+  mem_fraction_static: 0.9
+  dtype: "float16"
+  max_model_len: 8192
+  # gpu_ids: auto-detected if not specified
+  # gpu_ids: [0, 1, 2, 3]
+
+  generation:
+    temperature: 0.0       # Deterministic for judgment
+    max_new_tokens: 10     # Short output: <judge>Yes/No</judge>
+
+# FSF Judge configuration (Step 4)
+fsf_judge:
+  model_path: "${FSF_JUDGE_MODEL_PATH:-./models/Qwen3-4B}"
+  enabled: true
+  batch_size: 256           # Total items per step (same semantics as rollout; per-worker = batch_size / num_gpus)
+  tensor_parallel_size: 1
+  mem_fraction_static: 0.9
+  dtype: "float16"
+  max_model_len: 8192
+  # gpu_ids: auto-detected if not specified
+  # gpu_ids: [0, 1, 2, 3]
+
+  generation:
+    temperature: 0.3
+    max_new_tokens: 8000
+
+# Dataset build configuration (Step 5)
+dataset_build:
+  filters:
+    fsf_positive: true      # Only keep rewrites with FSF > 0
+    correct_only: true      # Only keep rewrites where is_correct=True
+
+  # Selection strategy: random / max_fsf / priority_correct
+  selection_strategy: "random"
+
+  # Output filename (relative to {output_root}/{experiment_name}/final/)
+  output_filename: "random_nofsf_correct.jsonl"

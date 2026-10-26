@@ -1,0 +1,309 @@
+hydra:
+  searchpath:
+  - file://verl/verl/trainer/config
+
+defaults:
+- ppo_trainer
+- _self_
+
+# ========== base ==========
+trainer:
+  project_name: cot_rewriter_grpo
+  experiment_name: llama3_3b_grpo_2x80g
+  total_epochs: 1000
+  total_training_steps: 500
+  save_freq: 20
+  test_freq: 20
+  val_before_train: false
+  device: cuda
+  log_freq: 10
+  max_actor_ckpt_to_keep: 3
+  default_local_dir: ${oc.env:CHECKPOINT_BASE_DIR}/cot_rewriter_grpo/${trainer.experiment_name}
+  n_gpus_per_node: 2
+  nnodes: 1
+  logger: [console]
+  rollout_data_dir: ${oc.env:CHECKPOINT_BASE_DIR}/rollout_data/${trainer.experiment_name}
+  validation_data_dir: ${oc.env:CHECKPOINT_BASE_DIR}/validation_data/${trainer.experiment_name}
+
+# ========== data ==========
+data:
+  train_files: 
+  val_files: 
+  train_batch_size: 16
+  val_batch_size: 16
+  gen_batch_size: 16
+  max_prompt_length: 4800
+  max_response_length: 10000
+  return_raw_chat: true
+  dataloader_num_workers: 8
+  reward_fn_key: reward_model
+  prompt_key: problem
+  apply_chat_template_kwargs:
+    enable_thinking: false
+  custom_cls:
+      path: ${oc.env:PROJECT_BASE_DIR}/verl/verl/utils/dataset/rl_dataset_jsonl.py
+      name: RLHFDatasetJSONL
+
+# ========== Actor & Rollout ==========
+actor_rollout_ref:
+  hybrid_engine: true
+
+  model:
+    path: ${oc.env:MODEL_BASE_DIR}/Llama-3.2-3B-Instruct
+    trust_remote_code: true
+    enable_gradient_checkpointing: true
+    use_remove_padding: false
+    lora_rank: 0               
+
+  actor:
+    strategy: fsdp
+    ppo_epochs: 1
+    policy_loss:
+      loss_mode: vanilla 
+    clip_ratio: 0.2
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.28
+    entropy_coeff: 0.0 
+    entropy_coeff_lower_bound: 0.0
+    grad_clip: 1.0
+    ppo_mini_batch_size: 16
+    ppo_micro_batch_size_per_gpu: 1    
+    use_kl_in_reward: false
+    use_kl_loss: true
+    kl_loss_coef: 0.01
+    kl_loss_type: low_var_kl
+    entropy_from_logits_with_chunking: true
+    fsdp_config:
+      dtype: bfloat16
+      param_offload: true
+      optimizer_offload: true
+      mixed_precision:
+        param_dtype: bf16
+        reduce_dtype: fp32
+        buffer_dtype: bf16
+      wrap_policy:
+        transformer_layer_cls_to_wrap: [LlamaDecoderLayer]
+        min_num_params: 0
+    optim:
+      lr: 1e-6                
+      weight_decay: 0.01
+      lr_scheduler_type: cosine
+      lr_warmup_steps_ratio: 0.1
+      min_lr_ratio: 0.1
+      total_training_steps: -1
+
+  # Rollout
+  rollout:
+    name: vllm
+    tensor_model_parallel_size: 2    
+    gpu_memory_utilization: 0.6    
+    dtype: bfloat16
+    load_format: auto
+    log_prob_micro_batch_size_per_gpu: 1    
+    n: 8
+    temperature: 0.7
+    top_k: 50
+    top_p: 0.95
+    presence_penalty: 1.5
+    prompt_length: 4800
+    response_length: 10000
+    max_num_batched_tokens: 62000
+    max_model_len: 14800
+    enforce_eager: true
+    free_cache_engine: true
+    sleep_level: 1
+    agent:
+      num_workers: 8
+  # Ref config
+  ref:
+    enable: true
+    log_prob_micro_batch_size_per_gpu: 1
+    strategy: fsdp
+    fsdp_config:
+      dtype: bfloat16
+      param_offload: true
+      mixed_precision:
+        param_dtype: bf16
+        reduce_dtype: fp32
+        buffer_dtype: bf16
+      wrap_policy:
+        transformer_layer_cls_to_wrap: [LlamaDecoderLayer]
+        min_num_params: 0
+
+# ========== algorithm ==========
+algorithm:
+  adv_estimator: grpo
+  norm_adv_by_std_in_group: true
+  gamma: 1.0
+  lam: 1.0
+  use_kl_in_reward: false
+  kl_penalty: kl
+
+  kl_ctrl:
+    type: fixed
+    kl_coef: 0.0
+
+  filter_groups:
+    _target_: verl.trainer.config.FilterGroupsConfig
+    enable: false
+    metric: length_ratio
+    max_num_gen_batches: -1
+
+# ========== Critic (GRPO doesn't need this) ==========
+critic:
+  enable: false
+
+# ========== Reward Model  ==========
+reward_model:
+  enable: false
+  reward_manager: cot_rewriter
+  offload_rollout_for_reward: true
+  task_runner_num_gpus: 0
+
+  reward_kwargs:
+    overlong_buffer_cfg:
+      enable: true
+      len: 2000               
+      log: false
+    max_resp_len: 10000
+
+# ========== Ray config ==========
+# Ray init (code directly uses ray_init, not ray_kwargs.ray_init)
+
+
+# ========== reward ==========
+custom_reward_function:
+  path: ${oc.env:PROJECT_BASE_DIR}/verl/verl/experimental/reward/cot_rewriter/combined_reward.py
+  name: compute_cot_rewriter_reward
+
+  reward_kwargs:
+    # ==================== Student Model config (cognitive reward R_cog) ====================
+    # Uses student model perplexity as cognitive reward
+    student_model_path: ${oc.env:MODEL_BASE_DIR}/Llama-3.2-1B-Instruct
+    student_tensor_parallel_size: 2    # TP=1 for 1B model
+    student_max_model_len: 12000
+    student_micro_batch_size: 1
+    student_max_num_seqs: 1
+
+    # Student Model inference backend config
+    reward_backend: sglang            # Options: sglang | vllm
+    sglang_mem_fraction_static: 0.5   # SGLang memory fraction
+    vllm_gpu_memory_utilization: 0.3  # vLLM GPU memory utilization
+    cleanup_after_compute: true       # Clean up cache after computation
+    # Cognitive reward mode
+    reward_mode: kl
+    ppl_delta_temperature: 1.0       # Sigmoid temperature, controls curve steepness (smaller = steeper)
+    # Parameters below are for other modes, not used in ppl_delta_norm_sigmoid mode
+    cot_effect_epsilon: 0.01          # cot_effect_delta_sigmoid mode: small constant to avoid division by zero
+    cot_effect_temperature: 1.0       # cot_effect_delta_sigmoid mode: sigmoid temperature
+    cot_effect_ratio_ceiling: 2       # Ceiling for cot_effect_ratio mode
+    ppl_ratio_ceiling: 999            # Ceiling for ppl_ratio mode
+    ppl_on_full_response: true       # Whether to compute PPL on full response (Q+CoT+A)
+                                        # true: compute PPL on full response
+                                        # false: compute PPL on answer only (default)
+    print_samples: 2                  # Number of samples to print
+    # ==================== KL Reward config (reward_mode: kl) ====================
+    # KL reward uses group-wise adaptive normalization
+    # Formula: r_KL = avg(kl_t) + alpha_kl * max(kl_t)
+    #       R_cog = exp(-r_KL / tau), where tau = max(range, eps) + beta * mean
+    # Enabled when reward_mode = "kl"
+    alpha_kl: 0.01                   # Weight for max(kl_t) term (default 0.01)
+    kl_eps: 1e-6                     # Epsilon to prevent division by zero (default 1e-6)
+    kl_fallback_tau: 3.0             # Fallback tau when group_size=1
+    # ==================== Cognitive reward formula config ====================
+    # R_cog = answer_log_prob(rewrite) - answer_log_prob(original)
+    # answer_log_prob = mean(token_log_probs) + alpha * min(token_log_probs)
+    alpha: 0.01                       # Weight for min-log-prob term
+    use_reward_delta: false            # Whether to use reward delta (rewrite - original)
+    # ==================== Tiered Reward config ====================
+    # When rewrite reduces perplexity beyond a threshold, give extra reward
+    use_tiered_reward: false           # Whether to enable tiered reward
+    tier_step: 0.001                   # Tier step size (5% improvement)
+    tier_reward: 0.002                  # Reward value per tier
+    # ==================== FSF Penalty config ====================
+    # FSF acts as penalty: rewrite_fsf > 0 (failed steps exist) -> reward = 0
+    use_logic_reward: true             # Whether to enable FSF penalty
+    fsf_model_path: 
+    fsf_tensor_parallel_size: 2
+    fsf_temperature: 0.4
+    fsf_top_k: 20
+    fsf_top_p: 0.95
+    fsf_max_new_tokens: 3072
+    fsf_gpu_memory_utilization: 0.3
+    fsf_max_model_len: 12000
+    fsf_micro_batch_size: 4
+    fsf_skip_group_on_parse_error: true
+    save_fsf_dot_outputs: true
+    save_prompts: true
+    r_logic_repeat_n: 1
+    # ==================== Useful reward config (R_useful) ====================
+    # Evaluates usefulness of rewrite relative to original
+    use_useful_reward: false          # Whether to enable useful reward
+    lambda_useful: 1.0                # Weight for useful reward lambda_useful
+    # ==================== Correct Judge config (correctness check) ====================
+    # Sets reward = 0 when incorrect
+    use_correct_judge: true
+    correct_judge_model_path: 
+    correct_judge_tensor_parallel_size: 2
+    correct_judge_gpu_memory_utilization: 0.3
+    correct_judge_max_model_len: 8192
+    correct_judge_micro_batch_size: 4
+    correct_judge_max_new_tokens: 10
+    correct_judge_filter_no_samples: true
+    # ==================== Data field mapping config ====================
+    field_mapping:
+      prompt_key: problem             # Question field name
+      reward_model_key: reward_model  # Reward model field name
+      question_key: question          # Question text field name
+      original_cot_key: original_cot  # Original CoT field name
+      ground_truth_key: ground_truth  # Ground truth field name
+    # ==================== Penalty config (zero-reward penalties) ====================
+    # All penalties set reward directly to 0 when triggered
+    use_repeat_penalty: false         # Repeat penalty: reward=0 when similarity > threshold
+    similarity_threshold: 0.5         # Repeat penalty threshold
+    # truncation_penalty is not needed here, overlong_buffer_cfg covers it (reward=0 when too long)
+    format_penalty: 1.0               # > 0 enables format penalty
+    # Too-short penalty: reward=0 when ratio < too_short_threshold_high
+    too_short_max_penalty: 0.0        # > 0 enables (currently off)
+    too_short_threshold_high: 0.4     # Threshold: penalize when ratio is below this value
+    # Too-long penalty: reward=0 when ratio > too_long_threshold_low
+    too_long_max_penalty: 0.0         # > 0 enables (currently off)
+    too_long_threshold_low: 4.0       # Threshold: penalize when ratio is above this value
+# ============ Reward Manager Configuration ============
+reward_manager:
+  source: importlib
+  name: CoTRewriterRewardManager
+  module:
+    path: ${oc.env:PROJECT_BASE_DIR}/verl/verl/experimental/reward/cot_rewriter/reward_manager.py
+
+# ============ Ray Configuration ============
+ray_init:
+  num_cpus:
+  timeline_json_file:
+
+ray_kwargs:
+  ray_init:
+    _temp_dir:
+    include_dashboard: false
+    dashboard_host: ''
+    dashboard_port:
+    ignore_reinit_error: true
+    logging_level: warning
+    local_mode: false
+    namespace: cot_rewriter_grpo
+    _system_config:
+      enable_metrics_collection: false
+      agent_register_timeout_ms: 120000
+    runtime_env:
+      env_vars:
+        PYTHONPATH: ${oc.env:PROJECT_BASE_DIR}:${oc.env:PROJECT_BASE_DIR}/verl
+        TOKENIZERS_PARALLELISM: 'false'
+        RAY_DEDUP_LOGS: '1'
+        RAY_DASHBOARD_HOST: ''
+        RAY_enable_dashboard: '0'
+        RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO: '0'
+        PYTORCH_NVML_BASED_CUDA_CHECK: '1'
+        VLLM_USE_V1: '0'
+        VLLM_ATTENTION_BACKEND: FLASH_ATTN
+        SWANLAB_MODE: ${oc.env:SWANLAB_MODE,offline}
+        SWANLAB_API_KEY: ${oc.env:SWANLAB_API_KEY}

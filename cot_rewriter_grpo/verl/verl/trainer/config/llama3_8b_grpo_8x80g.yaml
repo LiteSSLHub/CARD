@@ -1,0 +1,186 @@
+# @package _global_
+defaults:
+  - ppo_trainer
+  - _self_
+
+trainer:
+    project_name: cot_rewriter_grpo
+    experiment_name: llama3_8b_grpo_8x80g_v6
+    total_epochs: 1
+    total_training_steps: 500
+    save_freq: 50
+    test_freq: 50
+    val_before_train: false
+    device: cuda
+    log_freq: 10
+    max_actor_ckpt_to_keep: 3
+    default_local_dir: ${oc.env:CHECKPOINT_BASE_DIR}/cot_rewriter_grpo/${trainer.experiment_name}
+    n_gpus_per_node: 4
+    nnodes: 1
+    logger:
+      - console
+    rollout_data_dir: ${oc.env:CHECKPOINT_BASE_DIR}/${trainer.experiment_name}/rollout_data
+    validation_data_dir: ${oc.env:CHECKPOINT_BASE_DIR}/${trainer.experiment_name}/validation_data
+    data:
+      train_files: ${oc.env:DATA_BASE_DIR}/omnithought_rv_optimal_cot_rewrite_v2/train.jsonl
+      val_files: ${oc.env:DATA_BASE_DIR}/omnithought_rv_optimal_cot_rewrite_v2/val.jsonl
+      train_batch_size: 1
+      val_batch_size: 1
+      gen_batch_size: 1
+      max_prompt_length: 4600
+      max_response_length: 10000
+      return_raw_chat: true
+      dataloader_num_workers: 8
+      reward_fn_key: reward_model
+      prompt_key: problem
+      apply_chat_template_kwargs:
+        enable_thinking: false
+      custom_cls:
+        path: ${oc.env:PROJECT_BASE_DIR}/verl/verl/utils/dataset/rl_dataset_jsonl.py
+        name: RLHFDatasetJSONL
+    actor_rollout_ref:
+      hybrid_engine: true
+      model:
+        path: ${oc.env:MODEL_BASE_DIR}/LLM-Research/Meta-Llama-3.1-8B-Instruct
+        trust_remote_code: true
+        enable_gradient_checkpointing: true
+        use_remove_padding: false
+        lora_rank: 0
+      rollout:
+        name: vllm
+        tensor_model_parallel_size: 4
+        gpu_memory_utilization: 0.65
+        dtype: bfloat16
+        load_format: auto
+        log_prob_micro_batch_size_per_gpu: 1
+        n: 8
+        temperature: 0.6
+        top_k: 20
+        top_p: 0.95
+        presence_penalty: 1.0
+        prompt_length: 4600
+        response_length: 10000
+        max_num_batched_tokens: 6200
+      rollout_validation:
+        max_model_len: 14600
+        enforce_eager: true
+        free_cache_engine: true
+        sleep_level: 1
+        agent:
+          num_workers: 8
+          ref:
+            enable: true
+            log_prob_micro_batch_size_per_gpu: 1
+            strategy: fsdp
+            fsdp_config:
+              dtype: bfloat16
+              param_offload: true
+              optimizer_offload: true
+      validation:
+        do_sample: true
+        n: 8
+        temperature: 0.6
+    custom_reward_function:
+      path: ${oc.env:PROJECT_BASE_DIR}/verl/verl/experimental/reward/cot_rewriter/combined_reward.py
+      name: compute_cot_rewriter_reward
+      overworld_buffer_cfg:
+        enable: true
+        len: 3000
+        penalty_factor: 1.0
+        log: false
+        max_resp_len: 10000
+      student_model_path: ${oc.env:MODEL_BASE_DIR}/Qwen3-1.7B
+      student_tensor_parallel_size: 2
+      student_max_model_len: 12000
+      student_micro_batch_size: 1
+      student_max_num_seqs: 1
+      sglang_mem_fraction_static: 0.5
+      vllm_gpu_memory_utilization: 0.3
+      cleanup_after_compute: true
+      reward_backend: sglang
+      reward_mode: ppl
+      print_samples: 2
+      alpha: 0.01
+      use_reward_delta: true
+      use_tiered_reward: true
+      tier_step: 0.05
+      tier_reward: 0.1
+      use_logic_reward: true
+      lambda_logic: 0.5
+      fsf_model_path: ${oc.env:MODEL_BASE_DIR}/qwen3_4b_fsf_grm
+      fsf_tensor_parallel_size: 4
+      fsf_temperature: 0.6
+      fsf_top_k: 20
+      fsf_top_p: 0.95
+      fsf_max_new_tokens: 8000
+      fsf_gpu_memory_utilization: 0.4
+      fsf_max_model_len: 12000
+      fsf_reward_scale: 1.0
+      use_useful_reward: false
+      lambda_useful: 1.0
+      field_mapping:
+        prompt_key: problem
+        reward_model_key: reward_model
+        question_key: question
+        original_cot_key: original_cot
+        ground_truth_key: ground_truth
+      truncation_penalty: 0.5
+      format_penalty: 0.5
+      too_short_threshold_low: 0.4
+      too_short_threshold_high: 0.8
+      too_short_max_penalty: 0.5
+      too_long_threshold_low: 1.5
+      too_long_threshold_high: 2.5
+      too_long_max_penalty: 0.5
+      penalty_mode: absolute
+    algorithm:
+      adv_estimator: gae
+      norm_adv_by_std_in_group: true
+      gamma: 1.0
+      lam: 1.0
+      use_kl_in_reward: false
+      kl_penalty: kl
+      kl_ctrl:
+        type: fixed
+        kl_coef: 0.0
+      filter_groups:
+        _target_: verl.trainer.config.FilterGroupsConfig
+        enable: false
+        metric: length_ratio
+        max_num_gen_batches: -1
+      critic:
+        enable: false
+      reward_model:
+        enable: false
+    reward_manager:
+      cot_rewriter:
+        use_kl_in_reward: false
+        offload_rollout_for_reward: true
+        source: importlib
+        path: ${oc.env:PROJECT_BASE_DIR}/verl/verl/experimental/reward/cot_rewriter/reward_manager.py
+        name: CoTRewriterRewardManager
+    ray_kwargs:
+      ray_init:
+        num_cpus: null
+        _temp_dir: null
+        include_dashboard: false
+        dashboard_host: ''
+        dashboard_port: null
+        ignore_reinit_error: true
+        logging_level: warning
+        local_mode: false
+        namespace: cot_rewriter_grpo
+        _system_config:
+          enable_metrics_collection: false
+          agent_register_timeout_ms: 120000
+        runtime_env:
+          env_vars:
+            PYTHONPATH: ${oc.env:PROJECT_BASE_DIR}/.venv/lib/python3.12/site-packages:${oc.env:PROJECT_BASE_DIR}:${oc.env:PROJECT_BASE_DIR}/verl
+            TOKENIZERS_PARALLELISM: 'false'
+            RAY_DEDUP_LOGS: '1'
+            RAY_DASHBOARD_HOST: ''
+            RAY_ENABLE_DASHBOARD: '0'
+            RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO: '0'
+            VLLM_USE_V1: '0'
+            SWANLAB_MODE: 'cloud'
+            SWANLAB_API_KEY: ${oc.env:SWANLAB_API_KEY}

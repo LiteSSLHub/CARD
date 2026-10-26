@@ -1,0 +1,135 @@
+# EvalScope V2 evaluation config file - SFT model evaluation
+# For eval_v2.py (cross-benchmark streaming inference)
+#
+# Features:
+# - All prompts are mixed and scheduled uniformly, no per-benchmark worker_chunk_size needed
+# - Control inference concurrency via eval_batch_size
+# - temperature=0.6 (recommended for SFT models)
+
+model_path: "${MODEL_PATH}"
+
+# Optional LLM judge API config. Keep API_KEY empty unless a selected benchmark
+# requires judge-based scoring.
+BASE_URL: "${JUDGE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
+API_KEY: "${API_KEY:-}"
+
+# vLLM config (offline mode)
+vllm:
+  tp: 1                    # tensor parallel size
+  dp: 8                    # data parallel size (multi-GPU parallelism)
+  gpu_memory_utilization: 0.95
+  max_model_len: 32768
+  enforce_eager: false     # Set true only if required by the local vLLM backend
+  
+  # eval_v2.py specific parameters:
+  # - eval_batch_size: ThreadPoolExecutor concurrent submission count (recommended 4096)
+  # - max_dedup_n: n-parameter dedup limit (0=unlimited, 8=recommended). Limiting n increases unique prompt count,
+  #   improving GPU batch utilization. e.g. AIME 30 questions x 64 repeats, n=8 -> 30x8=240 effective sequences per GPU
+  # - worker_chunk_size: upper limit for each dispatch to Worker. When dp>1, 0 is auto-set to 64,
+  #   ensuring real-time progress updates. Can manually set smaller (e.g. 32) for finer-grained progress
+  # - tps_interval: TPS print interval (seconds), set to 0 to disable
+  eval_batch_size: 1536
+  max_dedup_n: 8
+  worker_chunk_size: 0
+  tps_interval: 30
+
+# Sandbox configuration
+sandbox:
+  work_dir: ${SANDBOX_WORK_DIR:-./tmp/evalscope_sandbox}
+
+# Evaluation configuration
+# Note: eval_v2.py does not need per-benchmark worker_chunk_size,
+# because all prompts are globally mixed and scheduled uniformly
+benchmarks:
+  # ==================== MATH Benchmarks ====================
+  MATH500:
+    dataset_name: "math_500"
+    repeats: 8
+    temperature: 0.4
+    top_p: 0.95
+    top_k: 25
+    max_tokens: 28000
+    few_shot_num: 0
+
+  AMC:
+    dataset_name: "amc"
+    subset: "amc23"
+    repeats: 16
+    temperature: 0.4
+    top_p: 0.95
+    top_k: 25
+    max_tokens: 28000
+    few_shot_num: 0
+  AIME25:
+    dataset_name: "aime25"
+    repeats: 24
+    temperature: 0.4
+    top_p: 0.95
+    top_k: 25
+    max_tokens: 28000
+    few_shot_num: 0
+    use_sandbox: false
+
+  AIME24:
+    dataset_name: "aime24"
+    repeats: 24
+    temperature: 0.4
+    top_p: 0.95
+    top_k: 25
+    max_tokens: 28000
+    few_shot_num: 0
+    use_sandbox: false
+
+
+
+  AGIEvalMath:
+    dataset_name: "agieval_math"
+    repeats: 4
+    temperature: 0.8
+    top_p: 0.95
+    top_k: 25
+    max_tokens: 28000
+    few_shot_num: 0
+
+  GSM8K:
+    dataset_name: "gsm8k"
+    repeats: 4
+    temperature: 0.8
+    top_p: 0.95
+    top_k: 25
+    max_tokens: 28000
+    few_shot_num: 0
+
+  # ==================== General Benchmarks ====================
+  GPQA:
+    dataset_name: "gpqa_extend"
+    repeats: 4
+    temperature: 1.0
+    top_p: 0.8
+    top_k: 20
+    repetition_penalty: 1.05
+    max_tokens: 28000
+    few_shot_num: 0
+    use_sandbox: false
+
+  MMLUProNoMath:
+    dataset_name: "mmlu_pro_no_math"
+    repeats: 1
+    temperature: 1.0
+    top_p: 0.8
+    top_k: 20
+    repetition_penalty: 1.05
+    max_tokens: 28000
+    few_shot_num: 0
+
+  ARC:
+    dataset_name: "arc"
+    subset: "ARC-Challenge"
+    repeats: 3
+    temperature: 1.0
+    top_p: 0.8
+    top_k: 20
+    repetition_penalty: 1.05
+    max_tokens: 28000
+    few_shot_num: 0
+    data_source: huggingface

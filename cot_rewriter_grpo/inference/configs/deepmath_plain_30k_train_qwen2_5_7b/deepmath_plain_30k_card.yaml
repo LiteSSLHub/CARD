@@ -1,0 +1,24 @@
+build_mode: "mix"
+fsf_positive_replace_ratio: 1.0
+target_count: null  # auto = total records
+question_limit: null
+mix_select_longest: true
+input_file: "${REPLACEMENT_INPUT_FILE:-./data/replacement_candidates.jsonl}"
+
+mix_rewrite_record_filter:
+  original_fsf: "positive"
+
+filters:
+  fsf_positive: false
+  fsf_zero: true
+  correct_only: true
+
+selection_strategy: "priority_correct"
+
+output_filename: "deepmath_plain_30k_card.jsonl"
+
+llamafactory:
+  enabled: false
+  dataset_info_path: "${LLAMAFACTORY_DATASET_INFO:-}"
+  dataset_name: "deepmath_plain_30k_card"
+  use_absolute_path: true

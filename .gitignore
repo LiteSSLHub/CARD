@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+pip-log.txt
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+nohup.out
+
+# Checkpoints & outputs
+checkpoints/
+outputs/
+results/
+*.pt
+*.pth
+*.safetensors
+
+# Data
+data/
+datasets/
+*.jsonl
+*.parquet
+
+# Evaluation artifacts
+evalscope/
+tmp/
+*.xlsx
+
+# Ray
+/tmp/ray/
+ray_tmp/
+
+# SwanLab
+swanlab/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
