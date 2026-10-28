@@ -1,6 +1,6 @@
 # CARD
 
-Official implementation of **From Solver Trajectories to Teaching Trajectories: Cognition-Aligned Reasoning Distillation** (**NeurIPS 2026**).
+Official implementation of **[From Solver Trajectories to Teaching Trajectories: Cognition-Aligned Reasoning Distillation](https://arxiv.org/abs/2610.36445)** (**NeurIPS 2026**).
 
 ## Overview
 
@@ -68,6 +68,22 @@ cd eval
 MODEL_PATH=/path/to/checkpoint \
   python eval.py eval_configs/eval_all_sft.yaml --cross-bench --resume
 cd ..
+```
+
+## Citation
+
+If you find this work useful, please cite:
+
+```bibtex
+@misc{luo2026card,
+  title={From Solver Trajectories to Teaching Trajectories: Cognition-Aligned Reasoning Distillation},
+  author={Yashuo Luo and Qianren Mao and Ziqi Qin and Junnan Liu and Haitao Li and Qili Zhang and Yuan Gao and Zhijun Chen and Xu Wang},
+  year={2026},
+  eprint={2610.36445},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI},
+  url={https://arxiv.org/abs/2610.36445}
+}
 ```
 
 Built on [veRL](https://github.com/volcengine/verl).
